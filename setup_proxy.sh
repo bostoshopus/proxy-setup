@@ -1,101 +1,74 @@
 #!/bin/bash
 
-# Скрипт установки и настройки Squid Proxy с IPv6 + IPv4 (универсальный для любых серверов)
+# Автоматическая установка 3proxy с настройкой IPv6-прокси
+# Этот скрипт устанавливает все зависимости, компилирует 3proxy, настраивает его и запускает
 
-echo "\n🚀 Установка Squid-прокси с полной анонимностью, поддержкой IPv6 и максимальной скоростью...\n"
+set -e  # Остановка при ошибке
 
-# Обновление системы и установка необходимых пакетов без запроса конфигурации
-export DEBIAN_FRONTEND=noninteractive
+# 1. Обновление пакетов и установка зависимостей
 apt update && apt upgrade -y
-apt install -y squid apache2-utils curl git make gcc dnsmasq || echo "⚠️ Ошибка при установке пакетов! Проверяем вручную..."
+apt install -y git wget curl build-essential iproute2 net-tools sudo
 
-# Проверка и установка 3proxy вручную (если отсутствует в репозитории)
-if ! command -v 3proxy &> /dev/null; then
-    echo "🔹 3proxy не найден, устанавливаем вручную..."
-    git clone https://github.com/z3APA3A/3proxy.git /tmp/3proxy
-    cd /tmp/3proxy || exit
-    make -f Makefile.Linux
-    mkdir -p /usr/local/etc/3proxy
-    cp src/3proxy /usr/local/bin/
-    cd .. && rm -rf /tmp/3proxy
-    echo "✅ 3proxy установлен!"
-else
-    echo "✅ 3proxy уже установлен!"
-fi
+# 2. Скачивание и установка 3proxy
+cd /tmp
+rm -rf 3proxy  # Удаляем старую папку, если есть
 
-# Автоматический выбор конфигурации при установке dnsmasq
-apt install -y dnsmasq <<EOF
-N
-EOF
+git clone https://github.com/z3APA3A/3proxy.git
+cd 3proxy
+make -f Makefile.Linux
+make install
 
-# Проверка и запуск dnsmasq (если отсутствует)
-if ! systemctl is-active --quiet dnsmasq; then
-    echo "🔹 Устанавливаем и запускаем dnsmasq..."
-    apt install -y dnsmasq
-    systemctl restart dnsmasq
-    systemctl enable dnsmasq
-else
-    echo "✅ dnsmasq уже работает!"
-fi
-
-# Оптимизация сети и маскировка трафика для Google Ads
-cat <<EOF >> /etc/sysctl.conf
-net.core.somaxconn = 65535
-net.ipv4.tcp_max_syn_backlog = 65536
-net.core.rmem_max = 16777216
-net.core.wmem_max = 16777216
-net.ipv4.tcp_fin_timeout = 10
-net.ipv4.tcp_tw_reuse = 1
-net.ipv4.tcp_window_scaling = 1
-net.ipv4.tcp_syncookies = 1
-net.ipv4.tcp_max_tw_buckets = 2000000
-net.ipv4.tcp_timestamps = 0
-net.ipv4.icmp_echo_ignore_all = 1
-net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1
-net.ipv4.ip_nonlocal_bind = 1
-net.ipv6.ip_nonlocal_bind = 1
-EOF
-sysctl -p
-
-# Запрос параметров у пользователя
-read -p "Введите количество прокси: " PROXY_COUNT
-read -p "Введите используемую IPv6 подсеть (например, 2a03:f80:49:4092::/48 или /64): " IPV6_SUBNET
-
-# Проверка корректности подсети
-if [[ "$IPV6_SUBNET" != */48 && "$IPV6_SUBNET" != */64 ]]; then
-    echo "Ошибка: Указанная подсеть должна быть /48 или /64."
+# 3. Проверка наличия бинарника
+if [ ! -f /usr/local/bin/3proxy ]; then
+    echo "Ошибка: 3proxy не был установлен!"
     exit 1
 fi
 
-# Генерация случайного 5-значного стартового порта
+# 4. Запрос параметров у пользователя
+read -p "Введите количество прокси: " PROXY_COUNT
+read -p "Введите используемую IPv6 подсеть (например, 2a03:f80:49:4092::/48 или /64): " IPV6_SUBNET
+
+# 5. Генерация списка IPv6-адресов и портов
 START_PORT=$((RANDOM % 40000 + 10000))
-
-# Получение IPv4
 IPV4=$(curl -4 ifconfig.me)
-
-# Файл для сохранения прокси
 PROXY_FILE="/root/proxy_list.txt"
 echo "" > $PROXY_FILE
 
-# Генерация списка случайных IPv6-адресов в пределах указанной /48 или /64 подсети
-PROXY_LIST=()
-for ((i=1; i<=PROXY_COUNT; i++)); do
+for ((i=0; i<PROXY_COUNT; i++)); do
     HEX=$(openssl rand -hex 2)
-    PROXY_IP="$IPV4:$((START_PORT + i))"
+    IPV6="$IPV6_SUBNET:$HEX"
+    PORT=$((START_PORT + i))
+    LOGIN="boost_shop"
     PASSWORD=$(openssl rand -base64 12)
-    echo "$PROXY_IP boost_shop $PASSWORD" >> $PROXY_FILE
-    PROXY_LIST+=("$IPV6_SUBNET::$HEX")
+    echo "$IPV4:$PORT:$LOGIN:$PASSWORD" >> $PROXY_FILE
+    echo "$IPV6:$PORT:$LOGIN:$PASSWORD" >> $PROXY_FILE
+
 done
 
-# Перезапуск сервисов
-systemctl restart squid
-systemctl enable squid
-3proxy /usr/local/bin/3proxy &
+# 6. Настройка systemd для автозапуска
+cat > /etc/systemd/system/3proxy.service <<EOF
+[Unit]
+Description=3proxy Proxy Server
+After=network.target
 
-# Вывод данных о прокси
-echo "\n✅ Прокси установлены и полностью анонимизированы!"
-echo "🔹 Список всех прокси сохранён в: $PROXY_FILE"
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+systemctl daemon-reload
+systemctl enable 3proxy
+systemctl restart 3proxy
+
+# 7. Интеграция с существующим скриптом
+wget -O npprproxyfull.sh https://raw.githubusercontent.com/nppr-team/npprproxydebian/main/npprproxyfull.sh
+chmod +x npprproxyfull.sh
+bash npprproxyfull.sh
+
+# 8. Вывод списка прокси
+echo "✅ Прокси установлены! Список сохранён в $PROXY_FILE"
 cat $PROXY_FILE
-
-echo "\n🔁 Чтобы сменить режим работы прокси, просто измените порт (на +10000 для SOCKS5)."
