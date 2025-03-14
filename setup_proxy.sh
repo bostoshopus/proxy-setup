@@ -1,11 +1,16 @@
 #!/bin/bash
+# Скрипт автоматической установки 3proxy с логином boostshop
 
 # Обновление системы и установка зависимостей
-apt update && apt upgrade -y
-apt install -y git curl build-essential net-tools sudo
+apt-get update --allow-releaseinfo-change
+apt-get upgrade -y
+apt-get install -y git wget curl build-essential net-tools sudo
 
-# Скачивание и сборка 3proxy
-rm -rf /tmp/3proxy
+# Удаляем старую версию 3proxy, если есть
+pkill 3proxy
+rm -rf /usr/local/bin/3proxy /etc/3proxy /tmp/3proxy
+
+# Скачивание и компиляция 3proxy
 cd /tmp
 git clone https://github.com/z3APA3A/3proxy.git
 cd 3proxy
@@ -21,51 +26,53 @@ read -p "Введите используемую IPv6 подсеть (напри
 # Генерация случайного 5-значного стартового порта
 START_PORT=$((RANDOM % 40000 + 10000))
 
-# Получение текущего IPv4
+# Получение основного IPv4
 IPV4=$(curl -4 ifconfig.me)
 
-# Файл для хранения списка прокси
+# Создаём файл для списка прокси
 PROXY_FILE="/root/proxy_list.txt"
 echo "" > $PROXY_FILE
 
 # Генерация списка прокси
 for ((i=0; i<$PROXY_COUNT; i++)); do
-    HEX=$(openssl rand -hex 2)
-    IPV6_ADDR="$IPV6_SUBNET:$HEX"
-    PORT=$(($START_PORT + i))
+    IPV6="${IPV6_SUBNET::-3}$i"
+    PORT=$((START_PORT + i))
     PASSWORD=$(openssl rand -base64 12)
-    echo "$IPV4:$PORT:boostshop:$PASSWORD" >> $PROXY_FILE
 
+    # Запись в файл
+    echo "$IPV4:$PORT:boostshop:$PASSWORD" >> $PROXY_FILE
 done
 
 # Создание конфигурации для 3proxy
-cat <<EOF > /etc/3proxy.cfg
+mkdir -p /etc/3proxy
+cat > /etc/3proxy/3proxy.cfg <<EOF
 daemon
-nserver 8.8.8.8
-nserver 8.8.4.4
-config /etc/3proxy.cfg
 log /var/log/3proxy.log
-socks -p3128
+auth strong
+users boostshop:CL:$PASSWORD
+allow boostshop
+proxy -6 -p$START_PORT
+socks -6 -p$((START_PORT + 1))
 EOF
 
-# Создание systemd сервиса для автозапуска 3proxy
-cat <<EOF > /etc/systemd/system/3proxy.service
+# Создание systemd сервиса для 3proxy
+cat > /etc/systemd/system/3proxy.service <<EOF
 [Unit]
-Description=3Proxy Server
+Description=3proxy Proxy Server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/3proxy /etc/3proxy.cfg
+ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Запуск 3proxy и добавление в автозагрузку
+# Перезапуск systemd и запуск 3proxy
 systemctl daemon-reload
 systemctl enable 3proxy
 systemctl restart 3proxy
 
-# Вывод завершения
-echo "✅ Прокси успешно созданы! Найдите их в файле /root/proxy_list.txt"
+echo "✅ Установка завершена!"
+echo "📄 Прокси сохранены в файл /root/proxy_list.txt"
