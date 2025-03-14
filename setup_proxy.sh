@@ -1,60 +1,54 @@
 #!/bin/bash
 
-# Автоматическая установка 3proxy с настройкой IPv6-прокси
-# Этот скрипт устанавливает все зависимости, компилирует 3proxy, настраивает его и запускает
+# Устанавливаем все необходимые зависимости
+echo "🔄 Обновление системы и установка необходимых пакетов..."
+apt-get update --allow-releaseinfo-change
+apt-get update --allow-releaseinfo-change --allow-releaseinfo-change-suite
+apt-get update && apt-get install -y git wget curl make gcc build-essential net-tools sudo systemctl
 
-set -e  # Остановка при ошибке
-
-# 1. Обновление пакетов и установка зависимостей
-apt update && apt upgrade -y
-apt install -y git wget curl build-essential iproute2 net-tools sudo
-
-# 2. Скачивание и установка 3proxy
-cd /tmp
-rm -rf 3proxy  # Удаляем старую папку, если есть
-
-git clone https://github.com/z3APA3A/3proxy.git
-cd 3proxy
-make -f Makefile.Linux
-make -f Makefile.Linux install
-
-# 3. Проверка наличия бинарника
-if [ ! -f /usr/local/bin/3proxy ]; then
-    echo "Ошибка: 3proxy не был установлен!"
-    exit 1
+# Проверяем и включаем systemctl (если его нет)
+if ! command -v systemctl &> /dev/null; then
+    echo "⚠️ Systemctl не найден! Устанавливаем..."
+    apt-get install -y systemd
 fi
 
-# 4. Запрос параметров у пользователя
-read -p "Введите количество прокси: " PROXY_COUNT
-read -p "Введите используемую IPv6 подсеть (например, 2a03:f80:49:4092::/48 или /64): " IPV6_SUBNET
+# Загружаем и запускаем установку NPPRProxy
+echo "⬇️ Загрузка и установка NPPRProxy..."
+wget -O npprproxyfull.sh https://raw.githubusercontent.com/nppr-team/npprproxydebian/main/npprproxyfull.sh
+chmod +x npprproxyfull.sh
+bash npprproxyfull.sh || bash npprproxyfull.sh --disable-inet6-ifaces-check
 
-# 5. Генерация списка IPv6-адресов и портов
-START_PORT=$((RANDOM % 40000 + 10000))
-IPV4=$(curl -4 ifconfig.me)
-PROXY_FILE="/root/proxy_list.txt"
-echo "" > $PROXY_FILE
+# Проверяем и исправляем ошибки с IPv6
+if [[ $? -ne 0 ]]; then
+    echo "⚠️ Возникла ошибка с IPv6. Пробуем обойти её..."
+    bash npprproxyfull.sh --disable-inet6-ifaces-check
+fi
 
-for ((i=0; i<PROXY_COUNT; i++)); do
-    HEX=$(openssl rand -hex 2)
-    IPV6="$IPV6_SUBNET:$HEX"
-    PORT=$((START_PORT + i))
-    LOGIN="boost_shop"
-    PASSWORD=$(openssl rand -base64 12)
-    echo "$IPV4:$PORT:$LOGIN:$PASSWORD" >> $PROXY_FILE
-    echo "$IPV6:$PORT:$LOGIN:$PASSWORD" >> $PROXY_FILE
+# Принимаем лицензионное соглашение для 3proxy
+echo "✅ Принятие лицензионного соглашения для 3proxy..."
+mkdir -p /usr/local/etc/3proxy
+echo "AcceptLicenseAgreement = 1" > /usr/local/etc/3proxy/3proxy.cfg
 
-done
+# Проверяем и запускаем 3proxy
+if command -v 3proxy &> /dev/null; then
+    echo "🚀 Запуск 3proxy..."
+    3proxy /usr/local/etc/3proxy/3proxy.cfg
+else
+    echo "❌ Ошибка: 3proxy не найден! Проверяем установку..."
+    bash npprproxyfull.sh --reinstall
+fi
 
-# 6. Настройка systemd для автозапуска
-cat > /etc/systemd/system/3proxy.service <<EOF
+# Автоматический запуск 3proxy при перезагрузке
+echo "🔧 Настройка автозапуска 3proxy..."
+cat <<EOF > /etc/systemd/system/3proxy.service
 [Unit]
-Description=3proxy Proxy Server
+Description=3Proxy Proxy Server
 After=network.target
 
 [Service]
-Type=simple
-ExecStart=/usr/local/bin/3proxy /etc/3proxy/3proxy.cfg
+ExecStart=/usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg
 Restart=always
+User=root
 
 [Install]
 WantedBy=multi-user.target
@@ -64,14 +58,4 @@ systemctl daemon-reload
 systemctl enable 3proxy
 systemctl restart 3proxy
 
-# 7. Проверка статуса 3proxy
-systemctl status 3proxy --no-pager
-
-# 8. Интеграция с существующим скриптом
-wget -O npprproxyfull.sh https://raw.githubusercontent.com/nppr-team/npprproxydebian/main/npprproxyfull.sh
-chmod +x npprproxyfull.sh
-bash npprproxyfull.sh
-
-# 9. Вывод списка прокси
-echo "✅ Прокси установлены! Список сохранён в $PROXY_FILE"
-cat $PROXY_FILE
+echo "✅ Установка завершена! 3proxy успешно запущен."
