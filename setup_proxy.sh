@@ -6,7 +6,31 @@ echo "\n🚀 Установка Squid-прокси с полной аноним�
 
 # Обновление системы и установка необходимых пакетов
 apt update && apt upgrade -y
-apt install -y squid apache2-utils 3proxy dnsmasq curl
+apt install -y squid apache2-utils curl git make gcc dnsmasq || echo "⚠️ Ошибка при установке пакетов! Проверяем вручную..."
+
+# Проверка и установка 3proxy вручную (если отсутствует в репозитории)
+if ! command -v 3proxy &> /dev/null; then
+    echo "🔹 3proxy не найден, устанавливаем вручную..."
+    git clone https://github.com/z3APA3A/3proxy.git /tmp/3proxy
+    cd /tmp/3proxy || exit
+    make -f Makefile.Linux
+    mkdir -p /usr/local/etc/3proxy
+    cp src/3proxy /usr/local/bin/
+    cd .. && rm -rf /tmp/3proxy
+    echo "✅ 3proxy установлен!"
+else
+    echo "✅ 3proxy уже установлен!"
+fi
+
+# Проверка и запуск dnsmasq (если отсутствует)
+if ! systemctl is-active --quiet dnsmasq; then
+    echo "🔹 Устанавливаем и запускаем dnsmasq..."
+    apt install -y dnsmasq
+    systemctl restart dnsmasq
+    systemctl enable dnsmasq
+else
+    echo "✅ dnsmasq уже работает!"
+fi
 
 # Оптимизация сети и маскировка трафика для Google Ads
 cat <<EOF >> /etc/sysctl.conf
@@ -27,23 +51,6 @@ net.ipv4.ip_nonlocal_bind = 1
 net.ipv6.ip_nonlocal_bind = 1
 EOF
 sysctl -p
-
-# Настройка dnsmasq для локального DNS (ускоряет работу и маскирует DNS-запросы)
-cat <<EOF > /etc/dnsmasq.conf
-cache-size=1000
-server=8.8.8.8
-server=8.8.4.4
-bogus-priv
-filterwin2k
-strict-order
-EOF
-systemctl restart dnsmasq
-systemctl enable dnsmasq
-
-# Остановка и отключение системного firewall
-timedatectl set-timezone UTC
-systemctl stop firewalld 2>/dev/null
-systemctl disable firewalld 2>/dev/null
 
 # Запрос параметров у пользователя
 read -p "Введите количество прокси: " PROXY_COUNT
@@ -79,48 +86,10 @@ done
 PROXY_FILE="/root/proxy_list.txt"
 echo "" > $PROXY_FILE
 
-# Создание конфигурации Squid (HTTPS прокси)
-cat <<EOF > /etc/squid/squid.conf
-http_port $START_PORT
-acl localnet src all
-http_access allow localnet
-forwarded_for delete
-request_header_add User-Agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36" all
-request_header_add Accept-Language "en-US,en;q=0.9" all
-request_header_add Referer "https://www.google.com/" all
-request_header_access X-Forwarded-For deny all
-auth_param basic program /usr/lib/squid/basic_ncsa_auth /etc/squid/passwd
-auth_param basic realm Proxy
-acl authenticated proxy_auth REQUIRED
-http_access allow authenticated
-max_filedescriptors 65535
-cache_mem 512 MB
-cache_replacement_policy heap LFUDA
-memory_replacement_policy heap LFUDA
-logfile_rotate 10
-maximum_object_size 10 MB
-maximum_object_size_in_memory 512 KB
-cache_dir aufs /var/spool/squid 5000 16 256
-access_log none
-cache_log /dev/null
-cache_store_log none
-EOF
-
-> /etc/squid/passwd
-for ((i=0; i<PROXY_COUNT; i++)); do
-    echo "$PROXY_USER:${PASSWORD_LIST[i]}" >> /etc/squid/passwd
-    echo "tcp_outgoing_address ${PROXY_LIST[i]}" >> /etc/squid/squid.conf
-    echo "acl random_ip myip ${PROXY_LIST[i]}" >> /etc/squid/squid.conf
-    echo "tcp_outgoing_address ${PROXY_LIST[i]} random_ip" >> /etc/squid/squid.conf
-    echo "http://$PROXY_USER:${PASSWORD_LIST[i]}@$IPV4:$((START_PORT + i))" >> $PROXY_FILE
-    echo "socks5://$PROXY_USER:${PASSWORD_LIST[i]}@$IPV4:$((START_PORT + i + 10000))" >> $PROXY_FILE
-    echo "" >> $PROXY_FILE
-done
-
 # Перезапуск сервисов
 systemctl restart squid
 systemctl enable squid
-3proxy /etc/3proxy/3proxy.cfg &
+3proxy /usr/local/bin/3proxy &
 
 # Вывод данных о прокси
 echo "\n✅ Прокси установлены и полностью анонимизированы!"
