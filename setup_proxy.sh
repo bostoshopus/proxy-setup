@@ -74,23 +74,19 @@ START_PORT=$((RANDOM % 40000 + 10000))
 # Получение IPv4
 IPV4=$(curl -4 ifconfig.me)
 
+# Файл для сохранения прокси
+PROXY_FILE="/root/proxy_list.txt"
+echo "" > $PROXY_FILE
+
 # Генерация списка случайных IPv6-адресов в пределах указанной /48 или /64 подсети
 PROXY_LIST=()
 for ((i=1; i<=PROXY_COUNT; i++)); do
     HEX=$(openssl rand -hex 2)
+    PROXY_IP="$IPV4:$((START_PORT + i))"
+    PASSWORD=$(openssl rand -base64 12)
+    echo "$PROXY_IP boost_shop $PASSWORD" >> $PROXY_FILE
     PROXY_LIST+=("$IPV6_SUBNET::$HEX")
 done
-
-# Генерация случайного пароля для каждого прокси
-PROXY_USER="boost_shop"
-PASSWORD_LIST=()
-for ((i=0; i<PROXY_COUNT; i++)); do
-    PASSWORD_LIST+=("$(openssl rand -base64 12)")
-done
-
-# Файл для сохранения прокси
-PROXY_FILE="/root/proxy_list.txt"
-echo "" > $PROXY_FILE
 
 # Перезапуск сервисов
 systemctl restart squid
@@ -100,9 +96,6 @@ systemctl enable squid
 # Вывод данных о прокси
 echo "\n✅ Прокси установлены и полностью анонимизированы!"
 echo "🔹 Список всех прокси сохранён в: $PROXY_FILE"
-for ((i=0; i<PROXY_COUNT; i++)); do
-    echo "🌍 HTTPS: http://$PROXY_USER:${PASSWORD_LIST[i]}@$IPV4:$((START_PORT + i))"
-    echo "🧦 SOCKS5: socks5://$PROXY_USER:${PASSWORD_LIST[i]}@$IPV4:$((START_PORT + i + 10000))"
-done
+cat $PROXY_FILE
 
 echo "\n🔁 Чтобы сменить режим работы прокси, просто измените порт (на +10000 для SOCKS5)."
