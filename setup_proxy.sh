@@ -1,78 +1,71 @@
 #!/bin/bash
 
 # Обновление системы и установка зависимостей
-echo "🔄 Обновление системы и установка необходимых пакетов..."
-apt-get update --allow-releaseinfo-change
-apt-get update --allow-releaseinfo-change --allow-releaseinfo-change-suite
-apt-get update && apt-get install -y git wget curl make gcc build-essential net-tools sudo systemctl nano
+apt update && apt upgrade -y
+apt install -y git curl build-essential net-tools sudo
 
-# Установка 3proxy
-echo "🔧 Установка 3proxy..."
+# Скачивание и сборка 3proxy
+rm -rf /tmp/3proxy
 cd /tmp
-git clone https://github.com/3proxy/3proxy.git
+git clone https://github.com/z3APA3A/3proxy.git
 cd 3proxy
 make -f Makefile.Linux
-mkdir -p /usr/local/bin /usr/local/etc/3proxy
+mkdir -p /usr/local/bin
 cp src/3proxy /usr/local/bin/
 chmod +x /usr/local/bin/3proxy
 
-# Создание конфигурации 3proxy
-echo "⚙️ Настройка 3proxy..."
-mkdir -p /usr/local/etc/3proxy
-CONFIG_FILE="/usr/local/etc/3proxy/3proxy.cfg"
-
-# Запрос количества прокси
+# Запрос параметров у пользователя
 read -p "Введите количество прокси: " PROXY_COUNT
-read -p "Введите IPv6 подсеть (например, 2a03:f80:49:4092::/48 или /64): " IPV6_SUBNET
+read -p "Введите используемую IPv6 подсеть (например, 2a03:f80:49:4092::/48 или /64): " IPV6_SUBNET
+
+# Генерация случайного 5-значного стартового порта
+START_PORT=$((RANDOM % 40000 + 10000))
+
+# Получение текущего IPv4
+IPV4=$(curl -4 ifconfig.me)
+
+# Файл для хранения списка прокси
+PROXY_FILE="/root/proxy_list.txt"
+echo "" > $PROXY_FILE
 
 # Генерация списка прокси
-START_PORT=40000
-PROXY_FILE="/root/proxy_list.txt"
-> $PROXY_FILE
-
-echo "daemon" > $CONFIG_FILE
-echo "log /dev/null" >> $CONFIG_FILE
-echo "nserver 8.8.8.8" >> $CONFIG_FILE
-echo "nserver 8.8.4.4" >> $CONFIG_FILE
-echo "maxconn 1000" >> $CONFIG_FILE
-echo "nscache 65536" >> $CONFIG_FILE
-echo "timeouts 1 5 30 60 180 1800 15 60" >> $CONFIG_FILE
-echo "users proxyuser:CL:proxy123" >> $CONFIG_FILE
-
 for ((i=0; i<$PROXY_COUNT; i++)); do
-  HEX=$(openssl rand -hex 2)
-  IPV6="${IPV6_SUBNET::-3}:$HEX"
-  LOGIN="user$i"
-  PASSWORD=$(openssl rand -base64 12)
+    HEX=$(openssl rand -hex 2)
+    IPV6_ADDR="$IPV6_SUBNET:$HEX"
+    PORT=$(($START_PORT + i))
+    PASSWORD=$(openssl rand -base64 12)
+    echo "$IPV4:$PORT:boostshop:$PASSWORD" >> $PROXY_FILE
 
-  echo "auth strong" >> $CONFIG_FILE
-  echo "allow $LOGIN" >> $CONFIG_FILE
-  echo "proxy -6 -n -a -p$((START_PORT + i)) -i$(curl -4 ifconfig.me) -e$IPV6" >> $CONFIG_FILE
-
-  echo "$(curl -4 ifconfig.me):$((START_PORT + i)):$LOGIN:$PASSWORD" >> $PROXY_FILE
 done
 
+# Создание конфигурации для 3proxy
+cat <<EOF > /etc/3proxy.cfg
+daemon
+nserver 8.8.8.8
+nserver 8.8.4.4
+config /etc/3proxy.cfg
+log /var/log/3proxy.log
+socks -p3128
+EOF
+
 # Создание systemd сервиса для автозапуска 3proxy
-echo "🛠️ Создание systemd сервиса..."
 cat <<EOF > /etc/systemd/system/3proxy.service
 [Unit]
-Description=3proxy Proxy Server
+Description=3Proxy Server
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/3proxy /usr/local/etc/3proxy/3proxy.cfg
+ExecStart=/usr/local/bin/3proxy /etc/3proxy.cfg
 Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-# Перезапуск 3proxy и добавление в автозапуск
-echo "🚀 Запуск 3proxy..."
+# Запуск 3proxy и добавление в автозагрузку
 systemctl daemon-reload
 systemctl enable 3proxy
 systemctl restart 3proxy
 
-echo "✅ Прокси установлены и полностью анонимизированы!"
-echo "📜 Все прокси сохранены в файл: $PROXY_FILE"
-cat $PROXY_FILE
+# Вывод завершения
+echo "✅ Прокси успешно созданы! Найдите их в файле /root/proxy_list.txt"
