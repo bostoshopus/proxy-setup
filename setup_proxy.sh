@@ -16,7 +16,7 @@ rm -rf 3proxy  # Удаляем старую папку, если есть
 git clone https://github.com/z3APA3A/3proxy.git
 cd 3proxy
 make -f Makefile.Linux
-make install
+make -f Makefile.Linux install
 
 # 3. Проверка наличия бинарника
 if [ ! -f /usr/local/bin/3proxy ]; then
@@ -64,11 +64,14 @@ systemctl daemon-reload
 systemctl enable 3proxy
 systemctl restart 3proxy
 
-# 7. Интеграция с существующим скриптом
+# 7. Проверка статуса 3proxy
+systemctl status 3proxy --no-pager
+
+# 8. Интеграция с существующим скриптом
 wget -O npprproxyfull.sh https://raw.githubusercontent.com/nppr-team/npprproxydebian/main/npprproxyfull.sh
 chmod +x npprproxyfull.sh
 bash npprproxyfull.sh
 
-# 8. Вывод списка прокси
+# 9. Вывод списка прокси
 echo "✅ Прокси установлены! Список сохранён в $PROXY_FILE"
 cat $PROXY_FILE
